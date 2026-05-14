@@ -1,1 +1,5 @@
+# Desktop GUI runtime
 PySide6>=6.6,<7
+
+# PyTorch Actor-Critic RL runtime
+torch>=2.2

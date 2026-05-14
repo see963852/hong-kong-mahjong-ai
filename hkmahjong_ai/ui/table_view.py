@@ -20,6 +20,7 @@ class TileHit:
 
 class GameTableWidget(QWidget):
     discardRequested = Signal(int)
+    tileSelected = Signal(int)
 
     def __init__(self, assets: AssetManager, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -27,6 +28,7 @@ class GameTableWidget(QWidget):
         self.env: HKMahjongEnv | None = None
         self.human_mode = True
         self.show_all_hands = False
+        self.selected_tile: int | None = None
         self.tile_hits: list[TileHit] = []
         self.setMinimumSize(920, 610)
         self.setMouseTracking(True)
@@ -35,6 +37,10 @@ class GameTableWidget(QWidget):
         self.env = env
         self.human_mode = human_mode
         self.show_all_hands = show_all_hands
+        self.update()
+
+    def set_selected_tile(self, tile: int | None) -> None:
+        self.selected_tile = tile
         self.update()
 
     def paintEvent(self, event) -> None:  # noqa: N802
@@ -59,7 +65,7 @@ class GameTableWidget(QWidget):
         pos = event.position().toPoint()
         for hit in self.tile_hits:
             if hit.rect.contains(pos):
-                self.discardRequested.emit(hit.tile)
+                self.tileSelected.emit(hit.tile)
                 return
 
     def _draw_center_hud(self, painter: QPainter) -> None:
@@ -75,6 +81,8 @@ class GameTableWidget(QWidget):
         painter.drawText(panel.adjusted(18, 20, -18, -58), Qt.AlignmentFlag.AlignCenter, title)
         painter.setFont(QFont("Microsoft JhengHei", 10))
         detail = f"牌牆 {len(self.env.wall)}　回合 {self.env.turns}"
+        if self.env.result and self.env.result.pattern:
+            detail += f"　牌型 {self.env.result.pattern}"
         if self.env.last_discard:
             detail += f"　上張 {tile_name(self.env.last_discard[1])}"
         painter.drawText(panel.adjusted(18, 62, -18, -20), Qt.AlignmentFlag.AlignCenter, detail)
@@ -171,12 +179,15 @@ class GameTableWidget(QWidget):
         y = area.top() + (area.height() - tile_h) // 2
         for tile in tiles:
             rect = QRect(x, y, tile_w, tile_h)
+            draw_rect = rect
+            if pid == 0 and self.human_mode and tile == self.selected_tile:
+                draw_rect = rect.translated(0, -12)
             if face_up:
-                self._draw_tile(painter, tile, rect)
+                self._draw_tile(painter, tile, draw_rect)
             else:
-                self._draw_tile_back(painter, rect)
+                self._draw_tile_back(painter, draw_rect)
             if pid == 0 and self.human_mode and self.env and self.env.current_player == 0 and not self.env.done:
-                self.tile_hits.append(TileHit(rect, tile))
+                self.tile_hits.append(TileHit(draw_rect, tile))
             x += tile_w + gap
 
     def _draw_hand_column(self, painter: QPainter, tiles: list[int], area: QRect, face_up: bool, pid: int) -> None:

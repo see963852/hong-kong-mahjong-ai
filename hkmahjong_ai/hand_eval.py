@@ -6,8 +6,11 @@ from .tiles import TILE_COUNT, is_suited
 
 
 def can_win(counts: list[int], open_melds: int = 0) -> bool:
-    """Basic 4 melds + 1 pair hand check, with open meld count supplied."""
+    """Standard 4 melds + 1 pair, plus closed seven pairs."""
     concealed_tiles = sum(counts)
+    if open_melds == 0 and concealed_tiles == 14 and is_seven_pairs(counts):
+        return True
+
     needed_melds = 4 - open_melds
     if needed_melds < 0:
         return False
@@ -22,6 +25,18 @@ def can_win(counts: list[int], open_melds: int = 0) -> bool:
             if _can_form_melds(tuple(remaining), needed_melds):
                 return True
     return False
+
+
+def is_seven_pairs(counts: list[int]) -> bool:
+    return sum(counts) == 14 and sum(1 for count in counts if count == 2) == 7
+
+
+def classify_win(counts: list[int], open_melds: int = 0) -> str:
+    if open_melds == 0 and is_seven_pairs(counts):
+        return "七對子"
+    if can_win(counts, open_melds):
+        return "四面一對"
+    return ""
 
 
 @lru_cache(maxsize=200_000)

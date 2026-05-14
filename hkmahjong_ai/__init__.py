@@ -4,6 +4,9 @@ __all__ = [
     "agents",
     "env",
     "hand_eval",
-    "model",
+    "rl_agent",
+    "rl_encoder",
+    "rl_model",
+    "rl_train",
     "tiles",
 ]

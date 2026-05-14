@@ -4,7 +4,6 @@ import random
 from typing import Any
 
 from .hand_eval import hand_potential
-from .model import LinearDiscardModel, discard_feature_keys
 
 
 class RandomAgent:
@@ -15,7 +14,12 @@ class RandomAgent:
         return self.rng.choice(legal_discards)
 
     def choose_claim(self, state: dict[str, Any], options: list[dict[str, Any]]) -> dict[str, Any] | None:
-        return self.rng.choice(options) if options and self.rng.random() < 0.25 else None
+        if not options:
+            return None
+        strongest = {"kong": 0.9, "pong": 0.75, "chow": 0.55}
+        options = sorted(options, key=lambda opt: strongest.get(opt["kind"], 0), reverse=True)
+        probability = strongest.get(options[0]["kind"], 0.5)
+        return options[0] if self.rng.random() < probability else None
 
 
 class HeuristicAgent:
@@ -41,37 +45,19 @@ class HeuristicAgent:
             for tile in option["consume"]:
                 next_counts[tile] -= 1
             score = hand_potential(next_counts, state.get("open_melds", 0) + 1)
+            if option["kind"] == "kong":
+                score += 6
+            elif option["kind"] == "pong":
+                score += 4
+            elif option["kind"] == "chow":
+                score += 1
             item = (score, self.rng.random(), option)
             if best_option is None or item > best_option:
                 best_option = item
-        if best_option and best_option[0] >= base + 2:
+        if best_option is None:
+            return None
+        kind = best_option[2]["kind"]
+        threshold = {"kong": base - 2, "pong": base - 2, "chow": base - 1}.get(kind, base)
+        if best_option[0] >= threshold:
             return best_option[2]
         return None
-
-
-class ModelAgent:
-    def __init__(
-        self,
-        model: LinearDiscardModel,
-        rng: random.Random | None = None,
-        epsilon: float = 0.0,
-        record: bool = False,
-    ):
-        self.model = model
-        self.rng = rng or random.Random()
-        self.epsilon = epsilon
-        self.record = record
-        self.decision_features: list[list[str]] = []
-        self.claim_helper = HeuristicAgent(self.rng)
-
-    def choose_discard(self, state: dict[str, Any], legal_discards: list[int]) -> int:
-        discard = self.model.choose(state, legal_discards, self.rng, self.epsilon)
-        if self.record:
-            self.decision_features.append(discard_feature_keys(state, discard))
-        return discard
-
-    def choose_claim(self, state: dict[str, Any], options: list[dict[str, Any]]) -> dict[str, Any] | None:
-        return self.claim_helper.choose_claim(state, options)
-
-    def reset_records(self) -> None:
-        self.decision_features.clear()
