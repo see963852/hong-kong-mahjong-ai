@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from hkmahjong_ai.rl_encoder import STATE_DIM
 from hkmahjong_ai.rl_train import checkpoint_metadata
 
 from .assets import PROJECT_ROOT
@@ -45,6 +46,8 @@ def list_pt_models() -> list[ModelInfo]:
 def read_model_info(path: Path) -> ModelInfo:
     try:
         meta: dict[str, Any] = checkpoint_metadata(str(path))
+        if int(meta["state_dim"]) != STATE_DIM:
+            raise ValueError(f"state_dim {meta['state_dim']} 不相容，目前需要 {STATE_DIM}")
         return ModelInfo(
             path=path,
             version=str(meta["version"]),
@@ -69,5 +72,7 @@ def read_model_info(path: Path) -> ModelInfo:
 
 
 def newest_model_path() -> str:
-    models = list_pt_models()
-    return str(models[0].path) if models else ""
+    for model in list_pt_models():
+        if not model.error:
+            return str(model.path)
+    return ""

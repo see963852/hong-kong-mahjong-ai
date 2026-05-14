@@ -11,6 +11,7 @@ import torch
 from .hand_eval import hand_potential
 from .rl_encoder import (
     ACTION_PASS,
+    CLAIM_KIND_TO_ACTION,
     claim_action_mask,
     discard_action_mask,
     encode_state,
@@ -38,12 +39,14 @@ class RLAgent:
         rng: random.Random | None = None,
         deterministic: bool = False,
         record: bool = False,
+        claim_exploration: float = 0.15,
     ):
         self.model = model
         self.device = torch.device(device)
         self.rng = rng or random.Random()
         self.deterministic = deterministic
         self.record = record
+        self.claim_exploration = claim_exploration
         self.decisions: list[RecordedDecision] = []
 
     def choose_discard(self, state: dict[str, Any], legal_discards: list[int]) -> int:
@@ -57,6 +60,11 @@ class RLAgent:
     def choose_claim(self, state: dict[str, Any], options: list[dict[str, Any]]) -> dict[str, Any] | None:
         state_tensor = encode_state(state, self.device)
         mask = claim_action_mask(options, self.device)
+        if not self.deterministic and options and self.rng.random() < self.claim_exploration:
+            option = self.rng.choice(options)
+            action = CLAIM_KIND_TO_ACTION[option["kind"]]
+            self._record(state, state_tensor, action, mask)
+            return option
         selection = select_action(self.model, state_tensor, mask, self.rng, self.deterministic)
         action = selection.action
         self._record(state, state_tensor, action, mask)

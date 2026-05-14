@@ -26,7 +26,7 @@ ACTION_CHOW = 35
 ACTION_PONG = 36
 ACTION_KONG = 37
 ACTION_SIZE = 38
-STATE_DIM = 316
+STATE_DIM = 350
 MAX_WALL_TILES = 83
 MAX_TURNS = 160
 
@@ -43,6 +43,9 @@ def encode_state(state: dict[str, Any], device: torch.device | str | None = None
     features: list[float] = []
 
     features.extend(_normalized_counts(state.get("hand_counts", []), scale=4.0))
+
+    discard_tile = state.get("discard_tile")
+    features.extend(1.0 if discard_tile == tile else 0.0 for tile in range(TILE_COUNT))
 
     for discards in state.get("discards", [[], [], [], []]):
         counts = [0] * TILE_COUNT

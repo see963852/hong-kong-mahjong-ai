@@ -22,7 +22,9 @@ class TrainingWorker(QThread):
         batch_size: int,
         capacity: int,
         learning_rate: float,
+        entropy_coeff: float,
         pool_probability: float,
+        updates_per_episode: int,
         update_interval: int,
         parent=None,
     ):
@@ -33,7 +35,9 @@ class TrainingWorker(QThread):
         self.batch_size = batch_size
         self.capacity = capacity
         self.learning_rate = learning_rate
+        self.entropy_coeff = entropy_coeff
         self.pool_probability = pool_probability
+        self.updates_per_episode = updates_per_episode
         self.update_interval = update_interval
         self.stop_event = threading.Event()
         self.pause_event = threading.Event()
@@ -47,7 +51,9 @@ class TrainingWorker(QThread):
                 batch_size=self.batch_size,
                 capacity=self.capacity,
                 lr=self.learning_rate,
+                entropy_coeff=self.entropy_coeff,
                 pool_probability=self.pool_probability,
+                updates_per_episode=self.updates_per_episode,
                 progress_callback=self.progress.emit,
                 stop_event=self.stop_event,
                 pause_event=self.pause_event,

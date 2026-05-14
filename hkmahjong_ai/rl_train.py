@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 import random
 from pathlib import Path
 import threading
@@ -16,7 +17,7 @@ from .hand_eval import hand_potential
 from .opponent_pool import OpponentPool
 from .replay_buffer import ReplayBuffer
 from .rl_agent import RLAgent
-from .rl_encoder import discard_action_mask, encode_state
+from .rl_encoder import ACTION_CHOW, ACTION_KONG, STATE_DIM, discard_action_mask, encode_state
 from .rl_model import (
     ActorCriticNet,
     create_optimizer,
@@ -26,6 +27,16 @@ from .rl_model import (
 )
 
 ProgressCallback = Callable[[dict[str, Any]], None]
+
+
+@dataclass(slots=True)
+class EpisodeTransition:
+    state: torch.Tensor
+    action: int
+    next_state: torch.Tensor
+    action_mask: torch.Tensor
+    next_action_mask: torch.Tensor
+    shaped_reward: float
 
 
 def train_rl(
@@ -38,11 +49,12 @@ def train_rl(
     gamma: float = 0.97,
     lr: float = 3e-4,
     value_coeff: float = 0.5,
-    entropy_coeff: float = 0.01,
+    entropy_coeff: float = 0.05,
     max_grad_norm: float = 1.0,
     snapshot_interval: int = 500,
-    pool_probability: float = 0.0,
+    pool_probability: float = 0.15,
     shaped_reward_coeff: float = 0.01,
+    updates_per_episode: int = 4,
     device_name: str | None = None,
     progress_callback: ProgressCallback | None = None,
     stop_event: threading.Event | None = None,
@@ -78,14 +90,21 @@ def train_rl(
         env = HKMahjongEnv(seed=rng.randrange(1_000_000_000))
         env.reset()
         agents = _build_self_play_agents(models, pool, pool_probability, rng, device)
+        episode_transitions: list[list[EpisodeTransition]] = [[], [], [], []]
 
         while not env.done:
             if _should_stop(stop_event):
                 stopped = True
                 break
             env.play_ai_turn(agents)
-            terminal_rewards = _terminal_rewards(env.result) if env.done and env.result else [0.0] * 4
-            _flush_agent_decisions(env, agents, buffers, terminal_rewards, shaped_reward_coeff)
+            _collect_agent_decisions(env, agents, episode_transitions, shaped_reward_coeff)
+        if stopped:
+            break
+
+        assert env.result is not None
+        terminal_rewards = _terminal_rewards(env.result)
+        _commit_episode_transitions(episode_transitions, buffers, terminal_rewards, gamma)
+        for _ in range(updates_per_episode):
             for seat in range(4):
                 if len(buffers[seat]) >= max(8, batch_size // 2):
                     recent_losses.append(
@@ -101,12 +120,9 @@ def train_rl(
                             device,
                         )
                     )
-            if len(recent_losses) > update_interval * 8:
-                recent_losses = recent_losses[-update_interval * 8 :]
-        if stopped:
-            break
+        if len(recent_losses) > update_interval * 8:
+            recent_losses = recent_losses[-update_interval * 8 :]
 
-        assert env.result is not None
         if env.result.winner is None:
             draws += 1
         else:
@@ -241,7 +257,7 @@ def compare_rl(path_a: str, path_b: str, episodes: int = 500, seed: int | None =
 
 def checkpoint_metadata(path: str) -> dict[str, Any]:
     """Load lightweight checkpoint metadata for GUI model management."""
-    checkpoint = torch.load(path, map_location="cpu")
+    checkpoint = torch.load(path, map_location="cpu", weights_only=False)
     players = checkpoint.get("players") or []
     extra = checkpoint.get("extra") or {}
     return {
@@ -281,11 +297,10 @@ def _build_self_play_agents(
     return agents
 
 
-def _flush_agent_decisions(
+def _collect_agent_decisions(
     env: HKMahjongEnv,
     agents: list[RLAgent],
-    buffers: list[ReplayBuffer],
-    terminal_rewards: list[float],
+    episode_transitions: list[list[EpisodeTransition]],
     shaped_reward_coeff: float,
 ) -> None:
     for agent in agents:
@@ -295,15 +310,36 @@ def _flush_agent_decisions(
             next_mask = _next_mask(env, decision.player_id, decision.action_mask)
             potential_after = float(hand_potential(next_obs["hand_counts"], next_obs.get("open_melds", 0)))
             shaped = (potential_after - decision.potential_before) * shaped_reward_coeff
-            reward = shaped + terminal_rewards[decision.player_id]
-            buffers[decision.player_id].push(
-                decision.state,
-                decision.action,
-                reward,
-                next_state,
-                env.done,
-                decision.action_mask,
-                next_mask,
+            episode_transitions[decision.player_id].append(
+                EpisodeTransition(
+                    state=decision.state,
+                    action=decision.action,
+                    next_state=next_state,
+                    action_mask=decision.action_mask,
+                    next_action_mask=next_mask,
+                    shaped_reward=shaped,
+                )
+            )
+
+
+def _commit_episode_transitions(
+    episode_transitions: list[list[EpisodeTransition]],
+    buffers: list[ReplayBuffer],
+    terminal_rewards: list[float],
+    gamma: float,
+) -> None:
+    for player_id, transitions in enumerate(episode_transitions):
+        total = len(transitions)
+        for index, transition in enumerate(transitions):
+            discounted_terminal = terminal_rewards[player_id] * (gamma ** max(0, total - index - 1))
+            buffers[player_id].push(
+                transition.state,
+                transition.action,
+                transition.shaped_reward + discounted_terminal,
+                transition.next_state,
+                True,
+                transition.action_mask,
+                transition.next_action_mask,
             )
 
 
@@ -334,6 +370,9 @@ def _update_model(
     dist = torch.distributions.Categorical(logits=legal_logits)
     log_probs = dist.log_prob(batch["actions"])
     entropy = dist.entropy().mean()
+    probs = dist.probs
+    claim_probability = probs[:, ACTION_CHOW : ACTION_KONG + 1].sum(dim=1).clamp_min(1.0e-8)
+    claim_exploration_loss = -0.02 * torch.log(claim_probability).mean()
 
     with torch.no_grad():
         _, next_values = model(batch["next_states"])
@@ -341,7 +380,7 @@ def _update_model(
     advantages = targets - values
     policy_loss = -(log_probs * advantages.detach()).mean()
     value_loss = F.mse_loss(values, targets)
-    loss = policy_loss + value_coeff * value_loss - entropy_coeff * entropy
+    loss = policy_loss + value_coeff * value_loss - entropy_coeff * entropy + claim_exploration_loss
 
     optimizer.zero_grad()
     loss.backward()
@@ -352,6 +391,7 @@ def _update_model(
         "value_loss": float(value_loss.detach().cpu().item()),
         "total_loss": float(loss.detach().cpu().item()),
         "entropy": float(entropy.detach().cpu().item()),
+        "claim_exploration_loss": float(claim_exploration_loss.detach().cpu().item()),
     }
 
 
@@ -371,7 +411,12 @@ def _load_or_create_models(
 ) -> tuple[list[ActorCriticNet], int]:
     if not model_path:
         return [ActorCriticNet().to(device) for _ in range(4)], 0
-    checkpoint = torch.load(model_path, map_location=device)
+    checkpoint = torch.load(model_path, map_location=device, weights_only=False)
+    checkpoint_state_dim = int(checkpoint.get("state_dim", 0))
+    if checkpoint_state_dim and checkpoint_state_dim != STATE_DIM:
+        raise ValueError(
+            f"checkpoint state_dim={checkpoint_state_dim} is incompatible with current state encoder; retrain the model"
+        )
     players = checkpoint.get("players")
     games_trained = int(checkpoint.get("games_trained", 0))
     models: list[ActorCriticNet] = []

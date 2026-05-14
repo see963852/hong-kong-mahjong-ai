@@ -134,7 +134,6 @@ class HKMahjongEnv:
             return result
         if claimed:
             return None
-
         return self._draw_next((discarder + 1) % 4)
 
     def play_ai_turn(self, agents: list[Any]) -> GameResult | None:
@@ -201,14 +200,35 @@ class HKMahjongEnv:
             counts = player.counts()
             options: list[dict[str, Any]] = []
             if counts[tile] >= 3:
-                options.append({"kind": "kong", "tiles": [tile, tile, tile, tile], "consume": [tile, tile, tile]})
+                options.append(
+                    {
+                        "kind": "kong",
+                        "tiles": [tile, tile, tile, tile],
+                        "consume": [tile, tile, tile],
+                        "discard_tile": tile,
+                    }
+                )
             if counts[tile] >= 2:
-                options.append({"kind": "pong", "tiles": [tile, tile, tile], "consume": [tile, tile]})
+                options.append(
+                    {
+                        "kind": "pong",
+                        "tiles": [tile, tile, tile],
+                        "consume": [tile, tile],
+                        "discard_tile": tile,
+                    }
+                )
             if offset == 1:
                 for seq in chow_options(counts, tile):
                     consume = list(seq)
                     consume.remove(tile)
-                    options.append({"kind": "chow", "tiles": list(seq), "consume": consume})
+                    options.append(
+                        {
+                            "kind": "chow",
+                            "tiles": list(seq),
+                            "consume": consume,
+                            "discard_tile": tile,
+                        }
+                    )
             if options:
                 claim_options_by_player.append((pid, options))
 
@@ -229,9 +249,11 @@ class HKMahjongEnv:
         for tile in claim["consume"]:
             player.hand.remove(tile)
         player.melds.append(Meld(claim["kind"], sorted_tiles(claim["tiles"]), discarder))
-        discard_tile = claim["tiles"][0]
+
+        discard_tile = self.last_discard[1] if self.last_discard is not None else claim.get("discard_tile")
         if self.players[discarder].discards and self.players[discarder].discards[-1] == discard_tile:
             self.players[discarder].discards.pop()
+
         self.current_player = player_id
         action = {"chow": "食", "pong": "碰", "kong": "槓"}.get(claim["kind"], claim["kind"])
         self._log(f"P{player_id + 1} {action} {names_from_tiles(claim['tiles'])}")
@@ -248,6 +270,8 @@ class HKMahjongEnv:
         player.hand = sorted_tiles(player.hand)
         self.current_player = player_id
         self._log(f"P{player_id + 1} 槓上補牌")
+        if self.can_self_win(player_id):
+            return self.declare_self_win(player_id)
         return None
 
     def _draw_next(self, player_id: int) -> GameResult | None:

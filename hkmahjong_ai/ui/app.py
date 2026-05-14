@@ -10,6 +10,7 @@ from PySide6.QtCore import Qt, QTimer
 from PySide6.QtWidgets import (
     QApplication,
     QFileDialog,
+    QDoubleSpinBox,
     QFormLayout,
     QFrame,
     QGroupBox,
@@ -23,7 +24,6 @@ from PySide6.QtWidgets import (
     QProgressBar,
     QPushButton,
     QSpinBox,
-    QDoubleSpinBox,
     QTabWidget,
     QTextEdit,
     QVBoxLayout,
@@ -36,7 +36,7 @@ from hkmahjong_ai.rl_agent import RLAgent
 from hkmahjong_ai.rl_model import load_rl_checkpoint
 from hkmahjong_ai.tiles import names_from_tiles, tile_name
 
-from .assets import AssetManager, PROJECT_ROOT
+from .assets import AssetManager
 from .fonts import load_cjk_font
 from .loss_chart import LossChart
 from .model_manager import MODELS_DIR, ensure_models_dir, list_pt_models, newest_model_path, read_model_info
@@ -185,14 +185,22 @@ class MahjongWindow(QMainWindow):
         self.train_lr.setRange(0.000001, 0.1)
         self.train_lr.setSingleStep(0.0001)
         self.train_lr.setValue(0.0003)
+        self.train_entropy = QDoubleSpinBox()
+        self.train_entropy.setDecimals(3)
+        self.train_entropy.setRange(0.0, 1.0)
+        self.train_entropy.setSingleStep(0.01)
+        self.train_entropy.setValue(0.05)
         self.train_pool_probability = QDoubleSpinBox()
         self.train_pool_probability.setDecimals(2)
         self.train_pool_probability.setRange(0.0, 1.0)
         self.train_pool_probability.setSingleStep(0.05)
-        self.train_pool_probability.setValue(0.0)
+        self.train_pool_probability.setValue(0.15)
+        self.train_updates_per_episode = QSpinBox()
+        self.train_updates_per_episode.setRange(1, 50)
+        self.train_updates_per_episode.setValue(4)
         self.train_update_interval = QSpinBox()
         self.train_update_interval.setRange(1, 5000)
-        self.train_update_interval.setValue(50)
+        self.train_update_interval.setValue(1)
 
         form.addRow("輸出模型", self._path_row(self.train_out_path, self.pick_train_output))
         form.addRow("繼續訓練來源", self._path_row(self.train_source_path, self.pick_train_source))
@@ -200,7 +208,9 @@ class MahjongWindow(QMainWindow):
         form.addRow("Batch size", self.train_batch_size)
         form.addRow("Replay capacity", self.train_capacity)
         form.addRow("Learning rate", self.train_lr)
+        form.addRow("Entropy coeff", self.train_entropy)
         form.addRow("Opponent pool 機率", self.train_pool_probability)
+        form.addRow("每局更新次數", self.train_updates_per_episode)
         form.addRow("UI 更新間隔", self.train_update_interval)
         layout.addWidget(config_box)
 
@@ -221,6 +231,7 @@ class MahjongWindow(QMainWindow):
 
         self.training_stats = QLabel("尚未開始訓練")
         self.training_stats.setObjectName("PanelText")
+        self.training_stats.setWordWrap(True)
         layout.addWidget(self.training_stats)
 
         self.loss_chart = LossChart()
@@ -257,9 +268,7 @@ class MahjongWindow(QMainWindow):
         root = QWidget()
         layout = QVBoxLayout(root)
         layout.setContentsMargins(16, 14, 16, 16)
-        text = QLabel(
-            "目前設定：本地單機、PySide6 GUI、PyTorch Actor-Critic RL、136 張牌、不使用花牌、不計番。"
-        )
+        text = QLabel("目前設定：本地單機、PySide6 GUI、PyTorch Actor-Critic RL、136 張牌、不使用花牌、不計番。")
         text.setObjectName("PanelText")
         text.setWordWrap(True)
         layout.addWidget(text)
@@ -386,7 +395,7 @@ class MahjongWindow(QMainWindow):
 
     def new_game(self, human_mode: bool) -> None:
         if not self.model_path:
-            QMessageBox.information(self, "尚未載入模型", "models/ 目錄沒有 .pt 模型。請先到「訓練」分頁建立模型。")
+            self.status_label.setText("models/ 目錄沒有 .pt 模型。請先到「訓練」分頁建立模型。")
         self.timer.stop()
         self.human_mode = human_mode
         self.auto_running = not human_mode
@@ -547,7 +556,9 @@ class MahjongWindow(QMainWindow):
             batch_size=self.train_batch_size.value(),
             capacity=self.train_capacity.value(),
             learning_rate=self.train_lr.value(),
+            entropy_coeff=self.train_entropy.value(),
             pool_probability=self.train_pool_probability.value(),
+            updates_per_episode=self.train_updates_per_episode.value(),
             update_interval=self.train_update_interval.value(),
         )
         self.worker.progress.connect(self.on_training_progress)
@@ -574,15 +585,17 @@ class MahjongWindow(QMainWindow):
     def on_training_progress(self, payload: dict[str, Any]) -> None:
         percent = int(payload.get("percent", 0.0) * 100)
         self.training_progress.setValue(max(0, min(100, percent)))
-        episode = payload.get("episode", 0)
-        total = payload.get("total_episodes", 0)
+        episode = int(payload.get("episode", 0))
+        total = int(payload.get("total_episodes", 0))
         policy_loss = float(payload.get("policy_loss", 0.0))
         value_loss = float(payload.get("value_loss", 0.0))
-        self.loss_chart.add_point(int(episode), policy_loss, value_loss)
+        self.loss_chart.add_point(episode, policy_loss, value_loss)
         self.training_stats.setText(
-            f"Episode {episode}/{total}｜勝率 {payload.get('win_rate', 0):.2%}｜"
-            f"流局率 {payload.get('draw_rate', 0):.2%}｜近局勝率 {payload.get('recent_win_rate', 0):.2%}｜"
-            f"平均局長 {payload.get('average_turns', 0):.1f}｜policy {policy_loss:.4f}｜value {value_loss:.4f}"
+            f"Episode {episode}/{total}｜進度 {percent}%｜總局數 {payload.get('games_trained', 0)}｜"
+            f"勝率 {payload.get('win_rate', 0):.2%}｜流局率 {payload.get('draw_rate', 0):.2%}｜"
+            f"近局勝率 {payload.get('recent_win_rate', 0):.2%}｜近局流局率 {payload.get('recent_draw_rate', 0):.2%}｜"
+            f"平均局長 {payload.get('average_turns', 0):.1f}｜policy {policy_loss:.4f}｜value {value_loss:.4f}｜"
+            f"設備 {payload.get('device', '-')}｜儲存 {payload.get('out_path', '-')}"
         )
 
     def on_training_completed(self, message: str) -> None:
@@ -614,7 +627,8 @@ class MahjongWindow(QMainWindow):
             self.loaded_model_label.setText("未載入模型")
             return
         for model in models:
-            item = QListWidgetItem(f"{model.name}｜games {model.games_trained}")
+            suffix = "｜不相容" if model.error else ""
+            item = QListWidgetItem(f"{model.name}｜games {model.games_trained}{suffix}")
             item.setData(Qt.ItemDataRole.UserRole, str(model.path))
             self.model_list.addItem(item)
         self.model_list.setCurrentRow(0)

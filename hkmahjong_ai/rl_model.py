@@ -111,7 +111,12 @@ def load_rl_checkpoint(
     device: torch.device | str = "cpu",
     player_index: int = 0,
 ) -> tuple[ActorCriticNet, dict[str, Any]]:
-    checkpoint = torch.load(path, map_location=device)
+    checkpoint = torch.load(path, map_location=device, weights_only=False)
+    checkpoint_state_dim = int(checkpoint.get("state_dim", STATE_DIM))
+    if checkpoint_state_dim != STATE_DIM:
+        raise ValueError(
+            f"checkpoint state_dim={checkpoint_state_dim} is incompatible with current STATE_DIM={STATE_DIM}; retrain the model"
+        )
     model = ActorCriticNet().to(device)
     players = checkpoint.get("players")
     if players:
