@@ -58,7 +58,6 @@ def select_action(
     deterministic: bool = False,
 ) -> ActionSelection:
     """Select one legal action from the actor distribution."""
-    del rng
     model.eval()
     with torch.no_grad():
         logits, value = model(state)
@@ -66,6 +65,10 @@ def select_action(
         dist = Categorical(logits=legal_logits)
         if deterministic:
             action_tensor = torch.argmax(legal_logits, dim=-1)
+        elif rng is not None and legal_logits.shape[0] == 1:
+            weights = dist.probs.squeeze(0).detach().cpu().tolist()
+            action = rng.choices(range(len(weights)), weights=weights, k=1)[0]
+            action_tensor = torch.tensor([action], dtype=torch.long, device=legal_logits.device)
         else:
             action_tensor = dist.sample()
         log_prob = dist.log_prob(action_tensor)
@@ -106,12 +109,20 @@ def save_rl_checkpoint(
     torch.save(checkpoint, path)
 
 
+def load_checkpoint_data(path: str, map_location: torch.device | str = "cpu") -> dict[str, Any]:
+    """Load project-owned checkpoints without enabling arbitrary pickle objects."""
+    checkpoint = torch.load(path, map_location=map_location, weights_only=True)
+    if not isinstance(checkpoint, dict):
+        raise ValueError(f"checkpoint must be a dict, got {type(checkpoint).__name__}")
+    return checkpoint
+
+
 def load_rl_checkpoint(
     path: str,
     device: torch.device | str = "cpu",
     player_index: int = 0,
 ) -> tuple[ActorCriticNet, dict[str, Any]]:
-    checkpoint = torch.load(path, map_location=device, weights_only=False)
+    checkpoint = load_checkpoint_data(path, map_location=device)
     checkpoint_state_dim = int(checkpoint.get("state_dim", STATE_DIM))
     if checkpoint_state_dim != STATE_DIM:
         raise ValueError(

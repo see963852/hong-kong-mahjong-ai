@@ -50,10 +50,16 @@ class RLAgent:
         self.decisions: list[RecordedDecision] = []
 
     def choose_discard(self, state: dict[str, Any], legal_discards: list[int]) -> int:
+        if not legal_discards:
+            raise ValueError("RLAgent cannot choose a discard without legal discard options")
         state_tensor = encode_state(state, self.device)
         mask = discard_action_mask(legal_discards, self.device)
         selection = select_action(self.model, state_tensor, mask, self.rng, self.deterministic)
-        action = selection.action if selection.action in legal_discards else legal_discards[0]
+        if selection.action not in legal_discards:
+            raise RuntimeError(
+                f"model selected illegal discard action {selection.action}; legal actions are {legal_discards}"
+            )
+        action = selection.action
         self._record(state, state_tensor, action, mask)
         return action
 
@@ -71,6 +77,9 @@ class RLAgent:
         if action == ACTION_PASS:
             return None
         return option_for_claim_action(action, options)
+
+    def choose_kong(self, state: dict[str, Any], options: list[dict[str, Any]]) -> dict[str, Any] | None:
+        return self.choose_claim(state, options)
 
     def pop_decisions(self) -> list[RecordedDecision]:
         decisions = self.decisions

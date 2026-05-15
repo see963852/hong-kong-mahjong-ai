@@ -21,6 +21,7 @@ from .rl_encoder import ACTION_CHOW, ACTION_KONG, STATE_DIM, discard_action_mask
 from .rl_model import (
     ActorCriticNet,
     create_optimizer,
+    load_checkpoint_data,
     load_rl_checkpoint,
     masked_logits,
     save_rl_checkpoint,
@@ -126,7 +127,8 @@ def train_rl(
         if env.result.winner is None:
             draws += 1
         else:
-            wins[env.result.winner] += 1
+            for winner in env.result.winners:
+                wins[winner] += 1
         games_trained += 1
         completed = episode + 1
         recent_results.append(env.result)
@@ -215,7 +217,8 @@ def evaluate_rl(model_path: str, episodes: int = 500, seed: int | None = None) -
         if env.result.winner is None:
             draws += 1
         else:
-            wins[env.result.winner] += 1
+            for winner in env.result.winners:
+                wins[winner] += 1
 
     return (
         f"model={model_path}, trained_games={games_trained}, episodes={episodes}, "
@@ -244,10 +247,12 @@ def compare_rl(path_a: str, path_b: str, episodes: int = 500, seed: int | None =
         assert env.result is not None
         if env.result.winner is None:
             wins["draws"] += 1
-        elif env.result.winner in a_seats:
-            wins["A"] += 1
         else:
-            wins["B"] += 1
+            for winner in env.result.winners:
+                if winner in a_seats:
+                    wins["A"] += 1
+                else:
+                    wins["B"] += 1
 
     return (
         f"A={path_a}, B={path_b}, episodes={episodes}, "
@@ -257,7 +262,7 @@ def compare_rl(path_a: str, path_b: str, episodes: int = 500, seed: int | None =
 
 def checkpoint_metadata(path: str) -> dict[str, Any]:
     """Load lightweight checkpoint metadata for GUI model management."""
-    checkpoint = torch.load(path, map_location="cpu", weights_only=False)
+    checkpoint = load_checkpoint_data(path, map_location="cpu")
     players = checkpoint.get("players") or []
     extra = checkpoint.get("extra") or {}
     return {
@@ -332,6 +337,8 @@ def _commit_episode_transitions(
         total = len(transitions)
         for index, transition in enumerate(transitions):
             discounted_terminal = terminal_rewards[player_id] * (gamma ** max(0, total - index - 1))
+            # This buffer stores Monte Carlo return-style samples, so every
+            # committed transition is terminal for bootstrap purposes.
             buffers[player_id].push(
                 transition.state,
                 transition.action,
@@ -399,9 +406,11 @@ def _terminal_rewards(result: GameResult | None) -> list[float]:
     if result is None or result.winner is None:
         return [0.0, 0.0, 0.0, 0.0]
     rewards = [-0.15, -0.15, -0.15, -0.15]
-    rewards[result.winner] = 1.0
-    if result.loser is not None and result.loser != result.winner:
-        rewards[result.loser] = -0.7
+    for winner in result.winners:
+        rewards[winner] = 1.0
+    for loser in result.losers:
+        if loser not in result.winners:
+            rewards[loser] = -0.7 * max(1, len(result.winners))
     return rewards
 
 
@@ -411,7 +420,7 @@ def _load_or_create_models(
 ) -> tuple[list[ActorCriticNet], int]:
     if not model_path:
         return [ActorCriticNet().to(device) for _ in range(4)], 0
-    checkpoint = torch.load(model_path, map_location=device, weights_only=False)
+    checkpoint = load_checkpoint_data(model_path, map_location=device)
     checkpoint_state_dim = int(checkpoint.get("state_dim", 0))
     if checkpoint_state_dim and checkpoint_state_dim != STATE_DIM:
         raise ValueError(
@@ -458,7 +467,7 @@ def _progress_payload(
         "games_trained": games_trained,
         "wins": list(wins),
         "draws": draws,
-        "win_rate": sum(wins) / max(1, episode),
+        "win_rate": (episode - draws) / max(1, episode),
         "draw_rate": draws / max(1, episode),
         "recent_win_rate": (recent_count - recent_draws) / recent_count,
         "recent_draw_rate": recent_draws / recent_count,

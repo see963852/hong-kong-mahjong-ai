@@ -1,0 +1,131 @@
+from __future__ import annotations
+
+from hkmahjong_ai.env import HKMahjongEnv, Meld
+
+
+class RecordingAgent:
+    def __init__(self) -> None:
+        self.claim_options: list[dict] = []
+
+    def choose_claim(self, state: dict, options: list[dict]) -> dict | None:
+        self.claim_options.extend(options)
+        return None
+
+
+def test_paomazai_does_not_offer_chow_claims() -> None:
+    env = HKMahjongEnv(seed=1)
+    env.reset()
+    env.players[1].hand = [0, 2]
+    agents = [RecordingAgent() for _ in range(4)]
+
+    result, claimed = env._resolve_claims(discarder=0, tile=1, agents=agents)
+
+    assert result is None
+    assert not claimed
+    assert agents[1].claim_options == []
+
+
+def test_discard_win_supports_multiple_winners_and_rich_dealer() -> None:
+    env = HKMahjongEnv(seed=2)
+    env.reset()
+    winning_wait = [0, 0, 0, 1, 1, 1, 2, 2, 2, 3, 3, 3, 4]
+    env.players[1].hand = list(winning_wait)
+    env.players[2].hand = list(winning_wait)
+
+    result, claimed = env._resolve_claims(discarder=0, tile=4, agents=None)
+
+    assert result is not None
+    assert result.winner == 1
+    assert result.winners == [1, 2]
+    assert result.losers == [0]
+    assert result.kind == "multi_discard_win"
+    assert result.score_delta == [-4, 2, 2, 0]
+    assert result.next_dealer == 0
+    assert env.dealer == 0
+    assert not claimed
+
+
+def test_kong_replacement_immediately_checks_self_draw() -> None:
+    env = HKMahjongEnv(seed=3)
+    env.reset()
+    env.current_player = 0
+    env.players[0].hand = [0, 0, 0, 1, 1, 1, 2, 2, 2, 3, 3, 3, 4]
+    env.wall = [4]
+
+    result = env._draw_replacement(0)
+
+    assert result is not None
+    assert result.kind == "self_draw"
+    assert env.done
+
+
+def test_melded_kong_scores_from_discarder_and_replacement_draws() -> None:
+    env = HKMahjongEnv(seed=4)
+    env.reset()
+    env.players[1].hand = [5, 5, 5] + env.players[1].hand
+    env.players[0].discards = [5]
+    env.last_discard = (0, 5)
+    env.wall = [9]
+
+    result = env._apply_claim(
+        1,
+        0,
+        {"kind": "kong", "tiles": [5, 5, 5, 5], "consume": [5, 5, 5], "discard_tile": 5},
+    )
+
+    assert result is None
+    assert env.players[0].discards == []
+    assert env.players[1].melds[-1].kong_type == "melded"
+    assert env.hand_score_delta == [-3, 3, 0, 0]
+    assert 9 in env.players[1].hand
+
+
+def test_concealed_kong_scores_all_others_and_replacement_draws() -> None:
+    env = HKMahjongEnv(seed=5)
+    env.reset()
+    env.players[0].hand = [7, 7, 7, 7]
+    env.wall = [9]
+
+    result = env.declare_concealed_kong(0, 7)
+
+    assert result is None
+    assert env.players[0].melds[-1].kong_type == "concealed"
+    assert env.players[0].hand == [9]
+    assert env.hand_score_delta == [6, -2, -2, -2]
+
+
+def test_added_kong_scores_all_others_when_not_robbed() -> None:
+    env = HKMahjongEnv(seed=6)
+    env.reset()
+    env.players[0].hand = [8]
+    env.players[0].melds = [Meld("pong", [8, 8, 8], 1)]
+    env.wall = [9]
+
+    result = env.declare_added_kong(0, 8, 0, agents=None)
+
+    assert result is None
+    assert env.players[0].melds[0].kind == "kong"
+    assert env.players[0].melds[0].kong_type == "added"
+    assert env.players[0].hand == [9]
+    assert env.hand_score_delta == [3, -1, -1, -1]
+
+
+def test_added_kong_can_be_robbed_by_multiple_winners_without_mutating_kong() -> None:
+    env = HKMahjongEnv(seed=7)
+    env.reset()
+    env.players[0].hand = [4]
+    env.players[0].melds = [Meld("pong", [4, 4, 4], 3)]
+    winning_wait = [0, 0, 0, 1, 1, 1, 2, 2, 2, 3, 3, 3, 4]
+    env.players[1].hand = list(winning_wait)
+    env.players[2].hand = list(winning_wait)
+
+    result = env.declare_added_kong(0, 4, 0, agents=None)
+
+    assert result is not None
+    assert result.kind == "rob_kong"
+    assert result.winners == [1, 2]
+    assert result.losers == [0]
+    assert result.score_delta == [-12, 6, 6, 0]
+    assert result.next_dealer == 0
+    assert env.players[0].hand == [4]
+    assert env.players[0].melds[0].kind == "pong"

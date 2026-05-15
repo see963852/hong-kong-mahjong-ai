@@ -4,12 +4,12 @@ The action space is intentionally fixed and small:
 
 - 0..33: discard that tile id
 - 34: pass a claim
-- 35: chow
+- 35: reserved for chow-compatible variants; paomazai does not expose it
 - 36: pong
 - 37: kong
 
-Only legal actions are exposed through masks. The environment still decides
-which concrete chow sequence is available when the actor selects chow.
+Only legal actions are exposed through masks. In the default paomazai rules,
+claim masks never enable chow.
 """
 
 from __future__ import annotations
@@ -26,9 +26,24 @@ ACTION_CHOW = 35
 ACTION_PONG = 36
 ACTION_KONG = 37
 ACTION_SIZE = 38
-STATE_DIM = 350
 MAX_WALL_TILES = 83
 MAX_TURNS = 160
+
+
+def _state_dim() -> int:
+    return (
+        TILE_COUNT  # concealed hand counts
+        + TILE_COUNT  # latest discard tile one-hot for claim decisions
+        + 4 * TILE_COUNT  # public discard rivers
+        + 4  # meld counts by player
+        + 4 * TILE_COUNT  # open meld tile counts
+        + 1  # wall remaining
+        + 4  # current/player seat one-hot
+        + 1  # turn progress
+    )
+
+
+STATE_DIM = _state_dim()
 
 CLAIM_KIND_TO_ACTION = {
     "chow": ACTION_CHOW,

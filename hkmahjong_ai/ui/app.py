@@ -72,6 +72,24 @@ class HumanGuiAgent:
             return None
         return button_map.get(clicked)
 
+    def choose_kong(self, state: dict[str, Any], options: list[dict[str, Any]]) -> dict[str, Any] | None:
+        if not options:
+            return None
+        box = QMessageBox(self.parent)
+        box.setWindowTitle("是否開槓？")
+        box.setText("你可以宣告暗槓或加槓。")
+        pass_button = box.addButton("取消", QMessageBox.ButtonRole.RejectRole)
+        button_map: dict[object, dict[str, Any]] = {}
+        for option in options:
+            kong_name = "加槓" if option.get("kong_type") == "added" else "暗槓"
+            button = box.addButton(f"{kong_name} {names_from_tiles(option['tiles'])}", QMessageBox.ButtonRole.AcceptRole)
+            button_map[button] = option
+        box.exec()
+        clicked = box.clickedButton()
+        if clicked == pass_button:
+            return None
+        return button_map.get(clicked)
+
 
 class MahjongWindow(QMainWindow):
     def __init__(self) -> None:
