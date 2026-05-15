@@ -207,7 +207,7 @@ class MahjongWindow(QMainWindow):
         self.train_entropy.setDecimals(3)
         self.train_entropy.setRange(0.0, 1.0)
         self.train_entropy.setSingleStep(0.01)
-        self.train_entropy.setValue(0.05)
+        self.train_entropy.setValue(0.02)
         self.train_pool_probability = QDoubleSpinBox()
         self.train_pool_probability.setDecimals(2)
         self.train_pool_probability.setRange(0.0, 1.0)
@@ -610,7 +610,7 @@ class MahjongWindow(QMainWindow):
         self.loss_chart.add_point(episode, policy_loss, value_loss)
         self.training_stats.setText(
             f"Episode {episode}/{total}｜進度 {percent}%｜總局數 {payload.get('games_trained', 0)}｜"
-            f"勝率 {payload.get('win_rate', 0):.2%}｜流局率 {payload.get('draw_rate', 0):.2%}｜"
+            f"總勝率 {payload.get('win_rate', 0):.2%}｜總流局率 {payload.get('draw_rate', 0):.2%}｜"
             f"近局勝率 {payload.get('recent_win_rate', 0):.2%}｜近局流局率 {payload.get('recent_draw_rate', 0):.2%}｜"
             f"平均局長 {payload.get('average_turns', 0):.1f}｜policy {policy_loss:.4f}｜value {value_loss:.4f}｜"
             f"設備 {payload.get('device', '-')}｜儲存 {payload.get('out_path', '-')}"

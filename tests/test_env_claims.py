@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import pytest
+
 from hkmahjong_ai.env import HKMahjongEnv, Meld
 from hkmahjong_ai.rl_encoder import ACTION_KONG, ACTION_PASS, ACTION_PONG
 
@@ -70,6 +72,51 @@ def test_legal_action_mask_ignores_stale_last_discard_for_current_player() -> No
     assert mask[3]
     assert mask[5]
     assert not mask[ACTION_PASS]
+
+
+def test_unclaimed_discard_clears_pending_claim_window() -> None:
+    env = HKMahjongEnv(seed=14)
+    env.reset()
+    env.current_player = 0
+    env.players[0].hand = [5]
+    env.players[1].hand = [1, 2, 3]
+    env.players[2].hand = [5, 5, 8]
+    env.wall = [7]
+
+    env.discard(5, agents=None)
+    mask = env.legal_action_mask(2)
+
+    assert env.current_player == 1
+    assert env.last_discard is None
+    assert not mask[ACTION_PASS]
+    assert not mask[ACTION_PONG]
+
+
+def test_claim_clears_pending_discard_after_removing_claimed_tile() -> None:
+    env = HKMahjongEnv(seed=15)
+    env.reset()
+    env.players[0].discards = [5, 5]
+    env.last_discard = (0, 5)
+    env.players[1].hand = [5, 5, 1]
+    env.players[2].hand = [5, 5, 8]
+
+    env._apply_claim(1, 0, {"kind": "pong", "tiles": [5, 5, 5], "consume": [5, 5], "discard_tile": 5})
+    mask = env.legal_action_mask(2)
+
+    assert env.players[0].discards == [5]
+    assert env.last_discard is None
+    assert not mask[ACTION_PASS]
+    assert not mask[ACTION_PONG]
+
+
+def test_declare_self_win_rejects_non_winning_hand() -> None:
+    env = HKMahjongEnv(seed=16)
+    env.reset()
+    env.current_player = 0
+    env.players[0].hand = [0, 1, 2]
+
+    with pytest.raises(ValueError, match="cannot self-win"):
+        env.declare_self_win(0)
 
 
 def test_discard_win_supports_multiple_winners_and_rich_dealer() -> None:

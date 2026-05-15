@@ -5,7 +5,7 @@ import random
 from typing import TYPE_CHECKING, Any, Protocol
 
 from .hand_eval import can_win, classify_win, winning_with_tile
-from .tiles import all_wall, counts_from_tiles, names_from_tiles, sorted_tiles, tile_name
+from .tiles import TILE_COUNT, all_wall, counts_from_tiles, names_from_tiles, sorted_tiles, tile_name
 
 if TYPE_CHECKING:
     import torch
@@ -173,8 +173,12 @@ class HKMahjongEnv:
         return can_win(player.counts(), len(player.melds))
 
     def declare_self_win(self, player_id: int | None = None) -> GameResult:
+        if self.done and self.result is not None:
+            return self.result
         pid = self.current_player if player_id is None else player_id
         player = self.players[pid]
+        if not self.can_self_win(pid):
+            raise ValueError(f"P{pid + 1} cannot self-win with current hand")
         pattern = classify_win(player.counts(), len(player.melds))
         self._pay_all_others(pid, self.rules.self_draw_points_each, "self_draw", None)
         return self._finish(pid, None, "self_draw", f"P{pid + 1} 自摸", pattern, winners=[pid], next_dealer=pid)
@@ -198,6 +202,7 @@ class HKMahjongEnv:
             return result
         if claimed:
             return None
+        self.last_discard = None
         return self._draw_next((discarder + 1) % 4)
 
     def play_ai_turn(self, agents: list[Any]) -> GameResult | None:
@@ -325,7 +330,7 @@ class HKMahjongEnv:
         return None, False
 
     def _claim_options_for_player(self, player_id: int, discarder: int, tile: int) -> list[dict[str, Any]]:
-        if player_id == discarder:
+        if player_id == discarder or not (0 <= tile < TILE_COUNT):
             return []
         counts = self.players[player_id].counts()
         options: list[dict[str, Any]] = []
@@ -359,6 +364,7 @@ class HKMahjongEnv:
         discard_tile = self.last_discard[1] if self.last_discard is not None else claim.get("discard_tile")
         if self.players[discarder].discards and self.players[discarder].discards[-1] == discard_tile:
             self.players[discarder].discards.pop()
+        self.last_discard = None
 
         self.current_player = player_id
         action = {"chow": "食", "pong": "碰", "kong": "槓"}.get(claim["kind"], claim["kind"])
@@ -374,6 +380,10 @@ class HKMahjongEnv:
         tile: int,
         agents: list[ClaimAgent] | None = None,
     ) -> GameResult | None:
+        if self.done:
+            return self.result
+        if player_id != self.current_player:
+            raise ValueError(f"P{player_id + 1} cannot kong outside their turn")
         player = self.players[player_id]
         if player.hand.count(tile) < 4:
             raise ValueError(f"P{player_id + 1} cannot concealed-kong {tile_name(tile)}")
@@ -395,6 +405,10 @@ class HKMahjongEnv:
         meld_index: int,
         agents: list[ClaimAgent] | None = None,
     ) -> GameResult | None:
+        if self.done:
+            return self.result
+        if player_id != self.current_player:
+            raise ValueError(f"P{player_id + 1} cannot kong outside their turn")
         player = self.players[player_id]
         if tile not in player.hand:
             raise ValueError(f"P{player_id + 1} cannot add-kong without {tile_name(tile)}")
@@ -439,6 +453,7 @@ class HKMahjongEnv:
         return self._finish_rob_kong(winners, kong_player, tile)
 
     def _draw_replacement(self, player_id: int) -> GameResult | None:
+        self.last_discard = None
         if not self.wall:
             return self._finish(None, None, "draw", "牌牆摸完，流局")
         tile = self.wall.pop()
@@ -452,6 +467,7 @@ class HKMahjongEnv:
         return None
 
     def _draw_next(self, player_id: int) -> GameResult | None:
+        self.last_discard = None
         self.current_player = player_id
         if not self.wall:
             return self._finish(None, None, "draw", "牌牆摸完，流局")

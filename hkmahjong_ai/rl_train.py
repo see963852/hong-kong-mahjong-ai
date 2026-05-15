@@ -28,6 +28,7 @@ from .rl_model import (
 )
 
 ProgressCallback = Callable[[dict[str, Any]], None]
+DRAW_REWARD = -0.2
 
 
 @dataclass(slots=True)
@@ -50,11 +51,13 @@ def train_rl(
     gamma: float = 0.97,
     lr: float = 3e-4,
     value_coeff: float = 0.5,
-    entropy_coeff: float = 0.05,
+    entropy_coeff: float = 0.02,
     max_grad_norm: float = 1.0,
     snapshot_interval: int = 500,
     pool_probability: float = 0.15,
-    shaped_reward_coeff: float = 0.01,
+    shaped_reward_coeff: float = 0.02,
+    discard_exploration: float = 0.75,
+    min_discard_exploration: float = 0.10,
     updates_per_episode: int = 4,
     buffer_max_episodes: int = 200,
     device_name: str | None = None,
@@ -91,7 +94,13 @@ def train_rl(
 
         env = HKMahjongEnv(seed=rng.randrange(1_000_000_000))
         env.reset()
-        agents = _build_self_play_agents(models, pool, pool_probability, rng, device)
+        current_discard_exploration = _scheduled_exploration(
+            episode,
+            episodes,
+            start=discard_exploration,
+            end=min_discard_exploration,
+        )
+        agents = _build_self_play_agents(models, pool, pool_probability, current_discard_exploration, rng, device)
         episode_transitions: list[list[EpisodeTransition]] = [[], [], [], []]
 
         while not env.done:
@@ -284,6 +293,7 @@ def _build_self_play_agents(
     models: list[ActorCriticNet],
     pool: OpponentPool,
     pool_probability: float,
+    discard_exploration: float,
     rng: random.Random,
     device: torch.device,
 ) -> list[RLAgent]:
@@ -301,6 +311,7 @@ def _build_self_play_agents(
                 rng=random.Random(rng.randrange(1_000_000_000)),
                 deterministic=False,
                 record=sampled_opponent is None,
+                discard_exploration=discard_exploration if sampled_opponent is None else 0.0,
             )
         )
     return agents
@@ -408,7 +419,7 @@ def _update_model(
 
 def _terminal_rewards(result: GameResult | None) -> list[float]:
     if result is None or result.winner is None:
-        return [0.0, 0.0, 0.0, 0.0]
+        return [DRAW_REWARD, DRAW_REWARD, DRAW_REWARD, DRAW_REWARD]
     rewards = [-0.15, -0.15, -0.15, -0.15]
     for winner in result.winners:
         rewards[winner] = 1.0
@@ -463,6 +474,8 @@ def _progress_payload(
     recent_draws = sum(1 for result in recent_results if result.winner is None)
     recent_won_games = sum(1 for result in recent_results if result.winner is not None)
     recent_turns = [result.turns for result in recent_results]
+    played_games = max(1, episode)
+    won_games = max(0, episode - draws)
     losses = recent_losses[-20:]
     avg_policy_loss = _average([item["policy_loss"] for item in losses])
     avg_value_loss = _average([item["value_loss"] for item in losses])
@@ -473,7 +486,7 @@ def _progress_payload(
         "games_trained": games_trained,
         "wins": list(wins),
         "draws": draws,
-        "win_rate": recent_won_games / recent_count,
+        "win_rate": won_games / played_games,
         "draw_rate": draws / max(1, episode),
         "recent_win_rate": (recent_count - recent_draws) / recent_count,
         "recent_draw_rate": recent_draws / recent_count,
@@ -488,6 +501,14 @@ def _progress_payload(
 
 def _average(values: list[float] | list[int]) -> float:
     return float(sum(values) / len(values)) if values else 0.0
+
+
+def _scheduled_exploration(episode: int, total_episodes: int, start: float, end: float) -> float:
+    if total_episodes <= 1:
+        return max(0.0, min(1.0, end))
+    progress = max(0.0, min(1.0, episode / (total_episodes - 1)))
+    value = start + (end - start) * progress
+    return max(0.0, min(1.0, value))
 
 
 def _clear_buffers(buffers: list[ReplayBuffer]) -> None:

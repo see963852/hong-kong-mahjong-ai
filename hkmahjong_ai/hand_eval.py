@@ -5,8 +5,14 @@ from functools import lru_cache
 from .tiles import TILE_COUNT, is_suited
 
 
+def _valid_counts(counts: list[int]) -> bool:
+    return len(counts) == TILE_COUNT and all(0 <= count <= 4 for count in counts)
+
+
 def can_win(counts: list[int], open_melds: int = 0) -> bool:
     """Standard 4 melds + 1 pair, plus closed seven pairs."""
+    if not _valid_counts(counts):
+        return False
     concealed_tiles = sum(counts)
     if open_melds == 0 and concealed_tiles == 14 and is_seven_pairs(counts):
         return True
@@ -28,6 +34,8 @@ def can_win(counts: list[int], open_melds: int = 0) -> bool:
 
 
 def is_seven_pairs(counts: list[int]) -> bool:
+    if not _valid_counts(counts):
+        return False
     return sum(counts) == 14 and sum(1 for count in counts if count == 2) == 7
 
 
@@ -67,13 +75,17 @@ def _can_form_melds(counts: tuple[int, ...], melds_left: int) -> bool:
 
 
 def winning_with_tile(hand_counts: list[int], tile: int, open_melds: int = 0) -> bool:
+    if not (0 <= tile < TILE_COUNT) or not _valid_counts(hand_counts):
+        return False
     counts = list(hand_counts)
+    if counts[tile] >= 4:
+        return False
     counts[tile] += 1
     return can_win(counts, open_melds)
 
 
 def chow_options(hand_counts: list[int], tile: int) -> list[tuple[int, int, int]]:
-    if not is_suited(tile):
+    if not (0 <= tile < TILE_COUNT) or not is_suited(tile) or len(hand_counts) != TILE_COUNT:
         return []
 
     options: list[tuple[int, int, int]] = []
@@ -91,8 +103,13 @@ def chow_options(hand_counts: list[int], tile: int) -> list[tuple[int, int, int]
 
 def hand_potential(counts: list[int], open_melds: int = 0, allow_chow: bool = False) -> int:
     """Small heuristic score for incomplete hands. Higher is better."""
+    if len(counts) != TILE_COUNT:
+        return 0
     score = open_melds * 8
     data = list(counts)
+
+    if can_win(data, open_melds):
+        score += 40
 
     for tile, count in enumerate(data):
         if count >= 3:
@@ -100,17 +117,27 @@ def hand_potential(counts: list[int], open_melds: int = 0, allow_chow: bool = Fa
         elif count == 2:
             score += 4
 
+    for suit in range(3):
+        offset = suit * 9
+        for i in range(7):
+            score += min(data[offset + i], data[offset + i + 1], data[offset + i + 2]) * 7
+        for i in range(8):
+            if data[offset + i] and data[offset + i + 1]:
+                score += 2
+        for i in range(7):
+            if data[offset + i] and data[offset + i + 2]:
+                score += 1
+
     if allow_chow:
-        for suit in range(3):
-            offset = suit * 9
-            for i in range(7):
-                score += min(data[offset + i], data[offset + i + 1], data[offset + i + 2]) * 7
-            for i in range(8):
-                if data[offset + i] and data[offset + i + 1]:
-                    score += 2
-            for i in range(7):
-                if data[offset + i] and data[offset + i + 2]:
-                    score += 1
+        for tile, count in enumerate(data):
+            if is_suited(tile) and count:
+                score += 1
+
+    waits = 0
+    for tile in range(TILE_COUNT):
+        if data[tile] < 4 and winning_with_tile(data, tile, open_melds):
+            waits += 1
+    score += waits * 3
 
     for tile, count in enumerate(data):
         if count == 1:

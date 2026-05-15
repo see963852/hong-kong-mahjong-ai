@@ -8,10 +8,12 @@ from hkmahjong_ai.replay_buffer import ReplayBuffer
 from hkmahjong_ai.rl_encoder import ACTION_CHOW, ACTION_KONG, ACTION_PASS, ACTION_PONG, ACTION_SIZE, STATE_DIM
 from hkmahjong_ai.rl_model import ActorCriticNet, create_optimizer
 from hkmahjong_ai.rl_train import (
+    DRAW_REWARD,
     EpisodeTransition,
     _clear_buffers,
     _commit_episode_transitions,
     _progress_payload,
+    _scheduled_exploration,
     _terminal_rewards,
     _update_model,
 )
@@ -68,7 +70,13 @@ def test_terminal_rewards_support_multiple_winners() -> None:
     assert _terminal_rewards(result) == pytest.approx([-1.0, 1.0, 1.0, -0.15])
 
 
-def test_progress_win_rate_is_recent_game_level_not_player_win_sum() -> None:
+def test_terminal_rewards_penalize_draws() -> None:
+    result = GameResult(None, None, "draw", 88, 0, "draw")
+
+    assert _terminal_rewards(result) == pytest.approx([DRAW_REWARD, DRAW_REWARD, DRAW_REWARD, DRAW_REWARD])
+
+
+def test_progress_win_rate_is_total_game_level_not_player_win_sum() -> None:
     results = [
         GameResult(1, 0, "multi_discard_win", 10, 50, "win", winners=[1, 2], losers=[0]),
         GameResult(None, None, "draw", 20, 0, "draw"),
@@ -89,6 +97,12 @@ def test_progress_win_rate_is_recent_game_level_not_player_win_sum() -> None:
 
     assert payload["win_rate"] == pytest.approx(0.5)
     assert payload["recent_win_rate"] == pytest.approx(0.5)
+
+
+def test_discard_exploration_schedule_decays_between_bounds() -> None:
+    assert _scheduled_exploration(0, 101, 0.75, 0.10) == pytest.approx(0.75)
+    assert _scheduled_exploration(50, 101, 0.75, 0.10) == pytest.approx(0.425)
+    assert _scheduled_exploration(100, 101, 0.75, 0.10) == pytest.approx(0.10)
 
 
 def test_clear_buffers_drops_old_off_policy_samples() -> None:
