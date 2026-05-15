@@ -45,6 +45,15 @@ def test_select_action_uses_supplied_rng_for_sampling() -> None:
     assert set(seq_a).issubset({0, 1, 2})
 
 
+def test_select_action_does_not_change_model_mode() -> None:
+    model = ActorCriticNet()
+    model.train()
+
+    select_action(model, torch.zeros(350), discard_action_mask([0]), random.Random(1))
+
+    assert model.training
+
+
 def test_choose_discard_rejects_empty_legal_actions() -> None:
     env = HKMahjongEnv(seed=5)
     state = env.reset()

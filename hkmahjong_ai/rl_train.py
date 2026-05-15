@@ -17,7 +17,7 @@ from .hand_eval import hand_potential
 from .opponent_pool import OpponentPool
 from .replay_buffer import ReplayBuffer
 from .rl_agent import RLAgent
-from .rl_encoder import ACTION_CHOW, ACTION_KONG, STATE_DIM, discard_action_mask, encode_state
+from .rl_encoder import ACTION_KONG, ACTION_PONG, STATE_DIM, encode_state
 from .rl_model import (
     ActorCriticNet,
     create_optimizer,
@@ -56,6 +56,7 @@ def train_rl(
     pool_probability: float = 0.15,
     shaped_reward_coeff: float = 0.01,
     updates_per_episode: int = 4,
+    buffer_max_episodes: int = 200,
     device_name: str | None = None,
     progress_callback: ProgressCallback | None = None,
     stop_event: threading.Event | None = None,
@@ -145,6 +146,9 @@ def train_rl(
                 games_trained=games_trained,
                 extra={"snapshot": True, "pool_size": len(pool)},
             )
+            _clear_buffers(buffers)
+        elif buffer_max_episodes > 0 and completed % buffer_max_episodes == 0:
+            _clear_buffers(buffers)
 
         if progress_callback is not None and (completed % max(1, update_interval) == 0 or completed == episodes):
             progress_callback(
@@ -354,7 +358,7 @@ def _next_mask(env: HKMahjongEnv, player_id: int, fallback: torch.Tensor) -> tor
     if env.done:
         return fallback.detach().cpu()
     try:
-        return discard_action_mask(env.legal_discards(player_id))
+        return env.legal_action_mask(player_id)
     except Exception:
         return fallback.detach().cpu()
 
@@ -378,7 +382,7 @@ def _update_model(
     log_probs = dist.log_prob(batch["actions"])
     entropy = dist.entropy().mean()
     probs = dist.probs
-    claim_probability = probs[:, ACTION_CHOW : ACTION_KONG + 1].sum(dim=1).clamp_min(1.0e-8)
+    claim_probability = probs[:, ACTION_PONG : ACTION_KONG + 1].sum(dim=1).clamp_min(1.0e-8)
     claim_exploration_loss = -0.02 * torch.log(claim_probability).mean()
 
     with torch.no_grad():
@@ -410,7 +414,8 @@ def _terminal_rewards(result: GameResult | None) -> list[float]:
         rewards[winner] = 1.0
     for loser in result.losers:
         if loser not in result.winners:
-            rewards[loser] = -0.7 * max(1, len(result.winners))
+            # TODO: Consider mapping score_delta to reward once scoring is stable.
+            rewards[loser] = -1.0
     return rewards
 
 
@@ -456,6 +461,7 @@ def _progress_payload(
 ) -> dict[str, Any]:
     recent_count = max(1, len(recent_results))
     recent_draws = sum(1 for result in recent_results if result.winner is None)
+    recent_won_games = sum(1 for result in recent_results if result.winner is not None)
     recent_turns = [result.turns for result in recent_results]
     losses = recent_losses[-20:]
     avg_policy_loss = _average([item["policy_loss"] for item in losses])
@@ -467,7 +473,7 @@ def _progress_payload(
         "games_trained": games_trained,
         "wins": list(wins),
         "draws": draws,
-        "win_rate": (episode - draws) / max(1, episode),
+        "win_rate": recent_won_games / recent_count,
         "draw_rate": draws / max(1, episode),
         "recent_win_rate": (recent_count - recent_draws) / recent_count,
         "recent_draw_rate": recent_draws / recent_count,
@@ -482,6 +488,11 @@ def _progress_payload(
 
 def _average(values: list[float] | list[int]) -> float:
     return float(sum(values) / len(values)) if values else 0.0
+
+
+def _clear_buffers(buffers: list[ReplayBuffer]) -> None:
+    for buffer in buffers:
+        buffer.clear()
 
 
 def _snapshot_path(out_path: str, games_trained: int) -> str:

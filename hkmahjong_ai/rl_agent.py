@@ -79,6 +79,8 @@ class RLAgent:
         return option_for_claim_action(action, options)
 
     def choose_kong(self, state: dict[str, Any], options: list[dict[str, Any]]) -> dict[str, Any] | None:
+        # NOTE: Kong decisions currently share claim_exploration with normal
+        # claim decisions. Split out kong_exploration if kong-specific tuning is needed.
         return self.choose_claim(state, options)
 
     def pop_decisions(self) -> list[RecordedDecision]:

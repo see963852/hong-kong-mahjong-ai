@@ -1,8 +1,11 @@
 from __future__ import annotations
 
 from hkmahjong_ai.env import HKMahjongEnv, Meld
+from hkmahjong_ai.rl_encoder import ACTION_KONG, ACTION_PASS, ACTION_PONG
 
 
+# These are whitebox regression tests. They intentionally set player hands,
+# melds, wall, and last_discard directly to isolate rule-state transitions.
 class RecordingAgent:
     def __init__(self) -> None:
         self.claim_options: list[dict] = []
@@ -23,6 +26,50 @@ def test_paomazai_does_not_offer_chow_claims() -> None:
     assert result is None
     assert not claimed
     assert agents[1].claim_options == []
+
+
+def test_legal_action_mask_returns_claim_mask_for_waiting_claim() -> None:
+    env = HKMahjongEnv(seed=11)
+    env.reset()
+    env.players[1].hand = [3, 3, 3]
+    env.players[0].discards = [3]
+    env.last_discard = (0, 3)
+    env.current_player = 0
+
+    mask = env.legal_action_mask(1)
+
+    assert mask[ACTION_PASS]
+    assert mask[ACTION_PONG]
+    assert mask[ACTION_KONG]
+    assert not mask[3]
+
+
+def test_legal_action_mask_returns_discard_mask_for_current_turn() -> None:
+    env = HKMahjongEnv(seed=12)
+    env.reset()
+    env.current_player = 0
+    env.players[0].hand = [1, 2, 2]
+
+    mask = env.legal_action_mask(0)
+
+    assert mask[1]
+    assert mask[2]
+    assert not mask[ACTION_PASS]
+
+
+def test_legal_action_mask_ignores_stale_last_discard_for_current_player() -> None:
+    env = HKMahjongEnv(seed=13)
+    env.reset()
+    env.current_player = 1
+    env.players[1].hand = [3, 3, 3, 5]
+    env.players[0].discards = [3]
+    env.last_discard = (0, 3)
+
+    mask = env.legal_action_mask(1)
+
+    assert mask[3]
+    assert mask[5]
+    assert not mask[ACTION_PASS]
 
 
 def test_discard_win_supports_multiple_winners_and_rich_dealer() -> None:

@@ -89,7 +89,7 @@ def chow_options(hand_counts: list[int], tile: int) -> list[tuple[int, int, int]
     return options
 
 
-def hand_potential(counts: list[int], open_melds: int = 0) -> int:
+def hand_potential(counts: list[int], open_melds: int = 0, allow_chow: bool = False) -> int:
     """Small heuristic score for incomplete hands. Higher is better."""
     score = open_melds * 8
     data = list(counts)
@@ -100,16 +100,17 @@ def hand_potential(counts: list[int], open_melds: int = 0) -> int:
         elif count == 2:
             score += 4
 
-    for suit in range(3):
-        offset = suit * 9
-        for i in range(7):
-            score += min(data[offset + i], data[offset + i + 1], data[offset + i + 2]) * 7
-        for i in range(8):
-            if data[offset + i] and data[offset + i + 1]:
-                score += 2
-        for i in range(7):
-            if data[offset + i] and data[offset + i + 2]:
-                score += 1
+    if allow_chow:
+        for suit in range(3):
+            offset = suit * 9
+            for i in range(7):
+                score += min(data[offset + i], data[offset + i + 1], data[offset + i + 2]) * 7
+            for i in range(8):
+                if data[offset + i] and data[offset + i + 1]:
+                    score += 2
+            for i in range(7):
+                if data[offset + i] and data[offset + i + 2]:
+                    score += 1
 
     for tile, count in enumerate(data):
         if count == 1:

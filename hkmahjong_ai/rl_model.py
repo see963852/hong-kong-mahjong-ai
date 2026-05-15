@@ -57,8 +57,10 @@ def select_action(
     rng: random.Random | None = None,
     deterministic: bool = False,
 ) -> ActionSelection:
-    """Select one legal action from the actor distribution."""
-    model.eval()
+    """Select one legal action from the actor distribution.
+
+    The caller owns model mode; this helper does not switch train/eval state.
+    """
     with torch.no_grad():
         logits, value = model(state)
         legal_logits = masked_logits(logits, action_mask)

@@ -32,6 +32,9 @@ class ReplayBuffer:
     def __len__(self) -> int:
         return len(self._items)
 
+    def clear(self) -> None:
+        self._items.clear()
+
     def push(
         self,
         state: torch.Tensor,

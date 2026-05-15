@@ -2,10 +2,13 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 import random
-from typing import Any, Protocol
+from typing import TYPE_CHECKING, Any, Protocol
 
 from .hand_eval import can_win, classify_win, winning_with_tile
 from .tiles import all_wall, counts_from_tiles, names_from_tiles, sorted_tiles, tile_name
+
+if TYPE_CHECKING:
+    import torch
 
 
 class ClaimAgent(Protocol):
@@ -148,6 +151,22 @@ class HKMahjongEnv:
         pid = self.current_player if player_id is None else player_id
         return sorted(set(self.players[pid].hand))
 
+    def legal_action_mask(self, player_id: int) -> "torch.Tensor":
+        from .rl_encoder import claim_action_mask, discard_action_mask
+
+        if self.done:
+            return discard_action_mask([])
+        if player_id == self.current_player:
+            return discard_action_mask(self.legal_discards(player_id))
+        if self.last_discard is not None:
+            discarder, tile = self.last_discard
+            discard_is_pending = bool(self.players[discarder].discards and self.players[discarder].discards[-1] == tile)
+            if discard_is_pending and player_id != discarder:
+                options = self._claim_options_for_player(player_id, discarder, tile)
+                if options:
+                    return claim_action_mask(options)
+        return discard_action_mask(self.legal_discards(player_id))
+
     def can_self_win(self, player_id: int | None = None) -> bool:
         pid = self.current_player if player_id is None else player_id
         player = self.players[pid]
@@ -289,27 +308,7 @@ class HKMahjongEnv:
         claim_options_by_player: list[tuple[int, list[dict[str, Any]]]] = []
         for offset in range(1, 4):
             pid = (discarder + offset) % 4
-            player = self.players[pid]
-            counts = player.counts()
-            options: list[dict[str, Any]] = []
-            if counts[tile] >= 3:
-                options.append(
-                    {
-                        "kind": "kong",
-                        "tiles": [tile, tile, tile, tile],
-                        "consume": [tile, tile, tile],
-                        "discard_tile": tile,
-                    }
-                )
-            if counts[tile] >= 2:
-                options.append(
-                    {
-                        "kind": "pong",
-                        "tiles": [tile, tile, tile],
-                        "consume": [tile, tile],
-                        "discard_tile": tile,
-                    }
-                )
+            options = self._claim_options_for_player(pid, discarder, tile)
             if options:
                 claim_options_by_player.append((pid, options))
 
@@ -324,6 +323,31 @@ class HKMahjongEnv:
                     result = self._apply_claim(pid, discarder, chosen)
                     return result, True
         return None, False
+
+    def _claim_options_for_player(self, player_id: int, discarder: int, tile: int) -> list[dict[str, Any]]:
+        if player_id == discarder:
+            return []
+        counts = self.players[player_id].counts()
+        options: list[dict[str, Any]] = []
+        if counts[tile] >= 3:
+            options.append(
+                {
+                    "kind": "kong",
+                    "tiles": [tile, tile, tile, tile],
+                    "consume": [tile, tile, tile],
+                    "discard_tile": tile,
+                }
+            )
+        if counts[tile] >= 2:
+            options.append(
+                {
+                    "kind": "pong",
+                    "tiles": [tile, tile, tile],
+                    "consume": [tile, tile],
+                    "discard_tile": tile,
+                }
+            )
+        return options
 
     def _apply_claim(self, player_id: int, discarder: int, claim: dict[str, Any]) -> GameResult | None:
         player = self.players[player_id]

@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from hkmahjong_ai.hand_eval import _can_form_melds, can_win, is_seven_pairs
+from hkmahjong_ai.hand_eval import _can_form_melds, can_win, hand_potential, is_seven_pairs
 from hkmahjong_ai.tiles import TILE_COUNT, counts_from_tiles
 
 
@@ -45,3 +45,12 @@ def test_invalid_tile_count_is_not_a_win() -> None:
     impossible_counts[0] = 5
     impossible_counts[1] = 2
     assert not can_win(impossible_counts)
+
+
+def test_hand_potential_defaults_to_paomazai_no_chow_scoring() -> None:
+    sequence_wait = counts(0, 1, 2)
+    pair = counts(0, 0)
+
+    assert hand_potential(sequence_wait) == 0
+    assert hand_potential(sequence_wait, allow_chow=True) > hand_potential(sequence_wait)
+    assert hand_potential(pair) == 4
